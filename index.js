@@ -144,6 +144,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
 });
 
 /* ───────────── LOGIN ───────────── */
-console.log('TOKEN exists:', Boolean(process.env.TOKEN));
-console.log('Attempting Discord login...');
-client.login(process.env.TOKEN);
+if (!process.env.TOKEN) {
+  console.error('❌ TOKEN is missing');
+  process.exit(1);
+}
+
+client.login(process.env.TOKEN)
+  .then(() => console.log('✅ Discord login success'))
+  .catch(err => console.error('❌ Discord login failed:', err));
