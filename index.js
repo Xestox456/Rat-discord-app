@@ -1,36 +1,6 @@
-/***********************
- * ENV + HARD DIAGNOSTICS
- ***********************/
-require('dotenv').config();
-
-console.log('ENV KEYS:', Object.keys(process.env));
 console.log('TOKEN EXISTS?', !!process.env.TOKEN);
-console.log('TOKEN LENGTH:', process.env.TOKEN?.length);
-
-process.on('unhandledRejection', err => {
-  console.error('🔥 UNHANDLED REJECTION:', err);
-});
-
-process.on('uncaughtException', err => {
-  console.error('🔥 UNCAUGHT EXCEPTION:', err);
-});
-
-/***********************
- * WEB SERVER (Render)
- ***********************/
+require('dotenv').config();
 const express = require('express');
-const app = express();
-
-const PORT = process.env.PORT || 10000;
-
-app.get('/', (_, res) => res.send('Bot is alive 🐀'));
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🌐 Web server listening on ${PORT}`);
-});
-
-/***********************
- * DISCORD CLIENT
- ***********************/
 const {
   Client,
   GatewayIntentBits,
@@ -41,44 +11,48 @@ const {
   ButtonStyle,
 } = require('discord.js');
 
+/* ───────────── WEB SERVER (for Render / pingers) ───────────── */
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get('/', (_, res) => res.send('Bot is alive 🐀'));
+app.listen(PORT, () =>
+  console.log(`🌐 Web server running on port ${PORT}`)
+);
+
+/* ───────────── DISCORD CLIENT ───────────── */
+
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.DirectMessages,
-    GatewayIntentBits.MessageContent,
   ],
   partials: [Partials.Channel],
 });
 
-/***********************
- * CACHE
- ***********************/
+/* ───────────── TEMP CACHE (with expiry) ───────────── */
+
 const sayCache = new Map();
-const CACHE_TTL = 60_000;
+const CACHE_TTL = 60_000; // 1 minute
 
 function setCache(userId, data) {
   sayCache.set(userId, data);
   setTimeout(() => sayCache.delete(userId), CACHE_TTL);
 }
 
-/***********************
- * READY
- ***********************/
+/* ───────────── READY ───────────── */
+
 client.once(Events.ClientReady, () => {
-  console.log('🟢 READY EVENT FIRED');
   console.log(`🤖 Logged in as ${client.user.tag}`);
 });
 
-/***********************
- * INTERACTIONS (FIXED)
- ***********************/
-client.on(Events.InteractionCreate, async interaction => {
-  try {
-    /* ---------- SLASH COMMAND ---------- */
-    if (interaction.isChatInputCommand() && interaction.commandName === 'say') {
-      // ✅ ACK IMMEDIATELY
-      await interaction.deferReply({ flags: 64 });
+/* ───────────── INTERACTIONS ───────────── */
 
+client.on(Events.InteractionCreate, async (interaction) => {
+  try {
+    /* ───── SLASH COMMAND: /say ───── */
+    if (interaction.isChatInputCommand() && interaction.commandName === 'say') {
       const message = interaction.options.getString('message', true);
 
       setCache(interaction.user.id, {
@@ -86,7 +60,7 @@ client.on(Events.InteractionCreate, async interaction => {
         channelId: interaction.channelId,
       });
 
-      const row = new ActionRowBuilder().addComponents(
+      const buttons = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
           .setCustomId('say_confirm')
           .setLabel('Confirm')
@@ -97,35 +71,42 @@ client.on(Events.InteractionCreate, async interaction => {
           .setStyle(ButtonStyle.Secondary)
       );
 
-      return interaction.editReply({
+      return interaction.reply({
         content: `⚠️ You are about to send:\n> **${message}**`,
-        components: [row],
+        components: [buttons],
+        ephemeral: true,
       });
     }
 
-    /* ---------- BUTTONS ---------- */
+    /* ───── BUTTONS ───── */
     if (!interaction.isButton()) return;
-
-    // ✅ ACK BUTTON IMMEDIATELY
-    await interaction.deferUpdate();
 
     const cached = sayCache.get(interaction.user.id);
 
+    /* CANCEL */
     if (interaction.customId === 'say_cancel') {
       sayCache.delete(interaction.user.id);
-      return interaction.editReply({
+
+      return interaction.update({
         content: '❌ Cancelled.',
         components: [],
       });
     }
 
+    /* CONFIRM */
     if (interaction.customId === 'say_confirm') {
       if (!cached) {
-        return interaction.editReply({
+        return interaction.update({
           content: '⌛ Message expired.',
           components: [],
         });
       }
+
+      // acknowledge ONCE
+      await interaction.update({
+        content: '📤 Sending…',
+        components: [],
+      });
 
       let sent = false;
 
@@ -135,35 +116,39 @@ client.on(Events.InteractionCreate, async interaction => {
           await channel.send(cached.message);
           sent = true;
         }
-      } catch (err) {
-        console.error('❌ Send failed:', err);
+      } catch {
+        // ignore
+      }
+
+      if (!sent) {
+        await interaction.followUp({
+          content: cached.message,
+        });
       }
 
       sayCache.delete(interaction.user.id);
-
-      return interaction.editReply({
-        content: sent ? '✅ Sent!' : '❌ Failed to send.',
-        components: [],
-      });
     }
   } catch (err) {
     console.error('❌ Interaction error:', err);
+
+    // SAFE follow-up only (no crashes)
+    if (interaction.isRepliable()) {
+      try {
+        await interaction.followUp({
+          content: '❌ Something went wrong.',
+          ephemeral: true,
+        });
+      } catch {}
+    }
   }
 });
 
-/***********************
- * LOGIN
- ***********************/
-console.log('🚀 About to login...');
-client.login(process.env.TOKEN);
-
-setInterval(() => {
-  console.log('🫀 still alive');
-}, 30_000);
+/* ───────────── LOGIN ───────────── */
 if (!process.env.TOKEN) {
-  console.error('❌ TOKEN missing — aborting');
+  console.error('❌ TOKEN is missing');
   process.exit(1);
 }
 
-console.log('🔐 Calling client.login()');
-client.login(process.env.TOKEN);
+client.login(process.env.TOKEN)
+  .then(() => console.log('✅ Discord login success'))
+  .catch(err => console.error('❌ Discord login failed:', err));
