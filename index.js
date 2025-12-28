@@ -1,6 +1,37 @@
-require('dotenv').config(); // MUST be first
+/***********************
+ * ENV + HARD DIAGNOSTICS
+ ***********************/
+require('dotenv').config();
 
+console.log('ENV KEYS:', Object.keys(process.env));
+console.log('TOKEN EXISTS?', !!process.env.TOKEN);
+console.log('TOKEN LENGTH:', process.env.TOKEN?.length);
+
+process.on('unhandledRejection', err => {
+  console.error('🔥 UNHANDLED REJECTION:', err);
+});
+
+process.on('uncaughtException', err => {
+  console.error('🔥 UNCAUGHT EXCEPTION:', err);
+});
+
+/***********************
+ * WEB SERVER (Render)
+ ***********************/
 const express = require('express');
+const app = express();
+
+const PORT = process.env.PORT || 10000;
+
+app.get('/', (_, res) => res.send('Bot is alive 🐀'));
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🌐 Web server listening on ${PORT}`);
+});
+
+/***********************
+ * DISCORD CLIENT
+ ***********************/
 const {
   Client,
   GatewayIntentBits,
@@ -11,37 +42,39 @@ const {
   ButtonStyle,
 } = require('discord.js');
 
-console.log('🔑 TOKEN EXISTS?', !!process.env.TOKEN);
-
-/* ───────────── WEB SERVER (Render-safe) ───────────── */
-
-const app = express();
-
-const PORT = process.env.PORT;
-if (!PORT) {
-  console.error('❌ PORT missing');
-  process.exit(1);
-}
-
-app.get('/', (_, res) => res.send('Bot is alive 🐀'));
-
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🌐 Listening on ${PORT}`);
-});
-
-/* ───────────── DISCORD CLIENT ───────────── */
-
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.DirectMessages,
-    GatewayIntentBits.MessageContent, // REQUIRED on Render
+    GatewayIntentBits.MessageContent, // safe even if unused
   ],
   partials: [Partials.Channel],
 });
 
-/* ───────────── CACHE ───────────── */
+/***********************
+ * GATEWAY VISIBILITY
+ ***********************/
+client.on('debug', msg => {
+  if (msg.includes('IDENTIFY') || msg.includes('READY')) {
+    console.log('🛰️ DEBUG:', msg);
+  }
+});
 
+client.on('shardError', err => {
+  console.error('💥 SHARD ERROR:', err);
+});
+
+client.on('shardDisconnect', (_, shardId) => {
+  console.warn(`⚠️ Shard ${shardId} disconnected`);
+});
+
+client.on('shardReconnecting', shardId => {
+  console.warn(`🔄 Shard ${shardId} reconnecting`);
+});
+
+/***********************
+ * CACHE
+ ***********************/
 const sayCache = new Map();
 const CACHE_TTL = 60_000;
 
@@ -50,18 +83,19 @@ function setCache(userId, data) {
   setTimeout(() => sayCache.delete(userId), CACHE_TTL);
 }
 
-/* ───────────── READY ───────────── */
-
+/***********************
+ * READY
+ ***********************/
 client.once(Events.ClientReady, () => {
   console.log('🟢 READY EVENT FIRED');
   console.log(`🤖 Logged in as ${client.user.tag}`);
 });
 
-/* ───────────── INTERACTIONS ───────────── */
-
-client.on(Events.InteractionCreate, async (interaction) => {
+/***********************
+ * INTERACTIONS
+ ***********************/
+client.on(Events.InteractionCreate, async interaction => {
   try {
-    // SLASH COMMAND
     if (interaction.isChatInputCommand() && interaction.commandName === 'say') {
       const message = interaction.options.getString('message', true);
 
@@ -92,7 +126,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     const cached = sayCache.get(interaction.user.id);
 
-    // CANCEL
     if (interaction.customId === 'say_cancel') {
       sayCache.delete(interaction.user.id);
       return interaction.update({
@@ -101,7 +134,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
       });
     }
 
-    // CONFIRM
     if (interaction.customId === 'say_confirm') {
       if (!cached) {
         return interaction.update({
@@ -133,28 +165,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
   } catch (err) {
     console.error('❌ Interaction error:', err);
-
-    if (interaction.isRepliable()) {
-      try {
-        await interaction.followUp({
-          content: '❌ Something went wrong.',
-          ephemeral: true,
-        });
-      } catch {}
-    }
   }
 });
 
-/* ───────────── LOGIN ───────────── */
-
+/***********************
+ * LOGIN (NO PROMISE CHAIN)
+ ***********************/
 if (!process.env.TOKEN) {
-  console.error('❌ TOKEN missing');
+  console.error('❌ TOKEN missing — aborting');
   process.exit(1);
 }
 
-console.log('🔐 Attempting Discord login…');
-
-client
-  .login(process.env.TOKEN)
-  .then(() => console.log('🔓 Login promise resolved'))
-  .catch(err => console.error('❌ Login failed:', err));
+console.log('🔐 Calling client.login()');
+client.login(process.env.TOKEN);
