@@ -1,6 +1,5 @@
-console.log('TOKEN EXISTS?', !!process.env.TOKEN);
 require('dotenv').config();
-const express = require('express');
+
 const {
   Client,
   GatewayIntentBits,
@@ -10,16 +9,6 @@ const {
   ButtonBuilder,
   ButtonStyle,
 } = require('discord.js');
-
-/* ───────────── WEB SERVER (for Render / pingers) ───────────── */
-
-const app = express();
-const PORT = process.env.PORT || 3000;
-
-app.get('/', (_, res) => res.send('Bot is alive 🐀'));
-app.listen(PORT, () =>
-  console.log(`🌐 Web server running on port ${PORT}`)
-);
 
 /* ───────────── DISCORD CLIENT ───────────── */
 
@@ -31,10 +20,10 @@ const client = new Client({
   partials: [Partials.Channel],
 });
 
-/* ───────────── TEMP CACHE (with expiry) ───────────── */
+/* ───────────── TEMP CACHE ───────────── */
 
 const sayCache = new Map();
-const CACHE_TTL = 60_000; // 1 minute
+const CACHE_TTL = 60_000;
 
 function setCache(userId, data) {
   sayCache.set(userId, data);
@@ -47,12 +36,15 @@ client.once(Events.ClientReady, () => {
   console.log(`🤖 Logged in as ${client.user.tag}`);
 });
 
-/* ───────────── INTERACTIONS ───────────── */
+/* ───────────── INTERACTIONS (FIXED) ───────────── */
 
-client.on(Events.InteractionCreate, async (interaction) => {
+client.on(Events.InteractionCreate, async interaction => {
   try {
     /* ───── SLASH COMMAND: /say ───── */
     if (interaction.isChatInputCommand() && interaction.commandName === 'say') {
+      // 🔥 ACK IMMEDIATELY (NO TIMEOUTS)
+      await interaction.deferReply({ flags: 64 });
+
       const message = interaction.options.getString('message', true);
 
       setCache(interaction.user.id, {
@@ -71,42 +63,34 @@ client.on(Events.InteractionCreate, async (interaction) => {
           .setStyle(ButtonStyle.Secondary)
       );
 
-      return interaction.reply({
+      return interaction.editReply({
         content: `⚠️ You are about to send:\n> **${message}**`,
         components: [buttons],
-        ephemeral: true,
       });
     }
 
     /* ───── BUTTONS ───── */
     if (!interaction.isButton()) return;
 
+    await interaction.deferUpdate(); // 🔥 ACK BUTTON
+
     const cached = sayCache.get(interaction.user.id);
 
-    /* CANCEL */
     if (interaction.customId === 'say_cancel') {
       sayCache.delete(interaction.user.id);
-
-      return interaction.update({
+      return interaction.editReply({
         content: '❌ Cancelled.',
         components: [],
       });
     }
 
-    /* CONFIRM */
     if (interaction.customId === 'say_confirm') {
       if (!cached) {
-        return interaction.update({
+        return interaction.editReply({
           content: '⌛ Message expired.',
           components: [],
         });
       }
-
-      // acknowledge ONCE
-      await interaction.update({
-        content: '📤 Sending…',
-        components: [],
-      });
 
       let sent = false;
 
@@ -116,39 +100,27 @@ client.on(Events.InteractionCreate, async (interaction) => {
           await channel.send(cached.message);
           sent = true;
         }
-      } catch {
-        // ignore
-      }
-
-      if (!sent) {
-        await interaction.followUp({
-          content: cached.message,
-        });
+      } catch (err) {
+        console.error('Send failed:', err);
       }
 
       sayCache.delete(interaction.user.id);
+
+      return interaction.editReply({
+        content: sent ? '✅ Sent!' : '❌ Failed to send.',
+        components: [],
+      });
     }
   } catch (err) {
     console.error('❌ Interaction error:', err);
-
-    // SAFE follow-up only (no crashes)
-    if (interaction.isRepliable()) {
-      try {
-        await interaction.followUp({
-          content: '❌ Something went wrong.',
-          ephemeral: true,
-        });
-      } catch {}
-    }
   }
 });
 
 /* ───────────── LOGIN ───────────── */
+
 if (!process.env.TOKEN) {
-  console.error('❌ TOKEN is missing');
+  console.error('❌ TOKEN missing');
   process.exit(1);
 }
 
-client.login(process.env.TOKEN)
-  .then(() => console.log('✅ Discord login success'))
-  .catch(err => console.error('❌ Discord login failed:', err));
+client.login(process.env.TOKEN);
