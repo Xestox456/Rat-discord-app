@@ -3,15 +3,18 @@ const express = require('express');
 const { Client, GatewayIntentBits, Events } = require('discord.js');
 
 /* ---------- EXPRESS ---------- */
-const app = express();
-const PORT = process.env.PORT || 3000;
+const app = require('express')();
 
-app.get('/', (req, res) => {
-  res.send('Bot is alive 🐀');
-});
+const PORT = process.env.PORT;
+if (!PORT) {
+  console.error('❌ PORT not provided by Render');
+  process.exit(1);
+}
 
-app.listen(PORT, () => {
-  console.log(`🌐 Web server running on port ${PORT}`);
+app.get('/', (_, res) => res.send('ok'));
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🌐 Listening on ${PORT}`);
 });
 
 /* ---------- DISCORD ---------- */
