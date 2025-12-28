@@ -1,16 +1,5 @@
 require('dotenv').config();
 const express = require('express');
-const app = express();
-
-const PORT = process.env.PORT || 3000;
-
-app.get('/', (req, res) => {
-  res.send('Bot is alive 🐀');
-});
-
-app.listen(PORT, () => {
-  console.log(`Web server running on port ${PORT}`);
-});
 const {
   Client,
   GatewayIntentBits,
@@ -19,8 +8,19 @@ const {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  InteractionType,
 } = require('discord.js');
+
+/* ───────────── WEB SERVER (for Render / pingers) ───────────── */
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get('/', (_, res) => res.send('Bot is alive 🐀'));
+app.listen(PORT, () =>
+  console.log(`🌐 Web server running on port ${PORT}`)
+);
+
+/* ───────────── DISCORD CLIENT ───────────── */
 
 const client = new Client({
   intents: [
@@ -30,92 +30,118 @@ const client = new Client({
   partials: [Partials.Channel],
 });
 
-// simple in-memory cache
+/* ───────────── TEMP CACHE (with expiry) ───────────── */
+
 const sayCache = new Map();
+const CACHE_TTL = 60_000; // 1 minute
+
+function setCache(userId, data) {
+  sayCache.set(userId, data);
+  setTimeout(() => sayCache.delete(userId), CACHE_TTL);
+}
+
+/* ───────────── READY ───────────── */
 
 client.once(Events.ClientReady, () => {
-  console.log(`Logged in as ${client.user.tag}`);
+  console.log(`🤖 Logged in as ${client.user.tag}`);
 });
+
+/* ───────────── INTERACTIONS ───────────── */
 
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
-    /* ───────────── SLASH COMMAND ───────────── */
-    if (
-      interaction.type === InteractionType.ApplicationCommand &&
-      interaction.commandName === 'say'
-    ) {
+    /* ───── SLASH COMMAND: /say ───── */
+    if (interaction.isChatInputCommand() && interaction.commandName === 'say') {
       const message = interaction.options.getString('message', true);
 
-      sayCache.set(interaction.user.id, {
+      setCache(interaction.user.id, {
         message,
         channelId: interaction.channelId,
       });
 
-      const row = new ActionRowBuilder().addComponents(
+      const buttons = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
-          .setCustomId('confirm_say')
+          .setCustomId('say_confirm')
           .setLabel('Confirm')
-          .setStyle(ButtonStyle.Danger)
+          .setStyle(ButtonStyle.Danger),
+        new ButtonBuilder()
+          .setCustomId('say_cancel')
+          .setLabel('Cancel')
+          .setStyle(ButtonStyle.Secondary)
       );
 
-      await interaction.reply({
-        content: `You are about to send:\n> **${message}**`,
-        components: [row],
-        flags: 64, // ephemeral
+      return interaction.reply({
+        content: `⚠️ You are about to send:\n> **${message}**`,
+        components: [buttons],
+        ephemeral: true,
       });
-      return;
     }
 
-    /* ───────────── BUTTON ───────────── */
-    if (interaction.isButton() && interaction.customId === 'confirm_say') {
-      const cached = sayCache.get(interaction.user.id);
+    /* ───── BUTTONS ───── */
+    if (!interaction.isButton()) return;
+
+    const cached = sayCache.get(interaction.user.id);
+
+    /* CANCEL */
+    if (interaction.customId === 'say_cancel') {
+      sayCache.delete(interaction.user.id);
+
+      return interaction.update({
+        content: '❌ Cancelled.',
+        components: [],
+      });
+    }
+
+    /* CONFIRM */
+    if (interaction.customId === 'say_confirm') {
       if (!cached) {
-        await interaction.reply({
-          content: '❌ Message expired.',
-          flags: 64,
+        return interaction.update({
+          content: '⌛ Message expired.',
+          components: [],
         });
-        return;
       }
 
-      // 1️⃣ acknowledge button immediately (NO FAILS)
+      // acknowledge ONCE
       await interaction.update({
-        content: 'Sending…',
+        content: '📤 Sending…',
         components: [],
-        flags: 64,
       });
 
       let sent = false;
 
-      // 2️⃣ try channel send (servers / some GCs)
       try {
         const channel = await client.channels.fetch(cached.channelId);
-        if (channel && channel.isTextBased?.()) {
-          await channel.send({ content: cached.message });
+        if (channel?.isTextBased()) {
+          await channel.send(cached.message);
           sent = true;
         }
       } catch {
-        // ignore and fallback
+        // ignore
       }
 
-      // 3️⃣ fallback for DM / GC app context
       if (!sent) {
         await interaction.followUp({
           content: cached.message,
-          ephemeral: false,
         });
       }
 
       sayCache.delete(interaction.user.id);
     }
   } catch (err) {
-    console.error('Interaction error:', err);
-    if (!interaction.replied && !interaction.deferred) {
-      await interaction.reply({
-        content: '❌ Interaction failed.',
-        flags: 64,
-      }).catch(() => {});
+    console.error('❌ Interaction error:', err);
+
+    // SAFE follow-up only (no crashes)
+    if (interaction.isRepliable()) {
+      try {
+        await interaction.followUp({
+          content: '❌ Something went wrong.',
+          ephemeral: true,
+        });
+      } catch {}
     }
   }
 });
+
+/* ───────────── LOGIN ───────────── */
 
 client.login(process.env.TOKEN);
