@@ -144,5 +144,5 @@ client.on(Events.InteractionCreate, async (interaction) => {
 });
 
 /* ───────────── LOGIN ───────────── */
-
+console.log('Attempting Discord login...');
 client.login(process.env.TOKEN);
