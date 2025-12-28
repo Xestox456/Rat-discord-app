@@ -144,5 +144,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
 });
 
 /* ───────────── LOGIN ───────────── */
+console.log('TOKEN exists:', Boolean(process.env.TOKEN));
 console.log('Attempting Discord login...');
 client.login(process.env.TOKEN);
