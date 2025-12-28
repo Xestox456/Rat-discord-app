@@ -154,6 +154,12 @@ client.on(Events.InteractionCreate, async interaction => {
 /***********************
  * LOGIN
  ***********************/
+console.log('🚀 About to login...');
+client.login(process.env.TOKEN);
+
+setInterval(() => {
+  console.log('🫀 still alive');
+}, 30_000);
 if (!process.env.TOKEN) {
   console.error('❌ TOKEN missing — aborting');
   process.exit(1);
