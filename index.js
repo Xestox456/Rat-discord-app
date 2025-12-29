@@ -11,21 +11,21 @@ const {
   MessageFlags,
 } = require('discord.js');
 
-/* ───────────── DISCORD CLIENT ───────────── */
+/* ───────────── CLIENT ───────────── */
 
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages, // ✅ REQUIRED TO SEND
+    GatewayIntentBits.GuildMessages,
     GatewayIntentBits.DirectMessages,
   ],
   partials: [Partials.Channel],
 });
 
-/* ───────────── TEMP CACHE ───────────── */
+/* ───────────── CACHE ───────────── */
 
 const sayCache = new Map();
-const CACHE_TTL = 5 * 60_000; // 5 minutes
+const CACHE_TTL = 5 * 60_000;
 
 function setCache(userId, data) {
   sayCache.set(userId, data);
@@ -42,13 +42,16 @@ client.once(Events.ClientReady, () => {
 
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
-    /* ───── /say ───── */
+    /* /say */
     if (interaction.isChatInputCommand() && interaction.commandName === 'say') {
       const message = interaction.options.getString('message', true);
 
-      setCache(interaction.user.id, { message });
+      setCache(interaction.user.id, {
+        message,
+        channelId: interaction.channelId, // ✅ STORE ID
+      });
 
-      const buttons = new ActionRowBuilder().addComponents(
+      const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
           .setCustomId('say_confirm')
           .setLabel('Confirm')
@@ -61,7 +64,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       return interaction.reply({
         content: `⚠️ You are about to send:\n> **${message}**`,
-        components: [buttons],
+        components: [row],
         flags: MessageFlags.Ephemeral,
       });
     }
@@ -70,7 +73,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     const cached = sayCache.get(interaction.user.id);
 
-    /* ───── CANCEL ───── */
     if (interaction.customId === 'say_cancel') {
       sayCache.delete(interaction.user.id);
       return interaction.update({
@@ -79,7 +81,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
       });
     }
 
-    /* ───── CONFIRM ───── */
     if (interaction.customId === 'say_confirm') {
       if (!cached) {
         return interaction.update({
@@ -93,9 +94,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
         components: [],
       });
 
-      const channel = interaction.channel;
+      // ✅ REFETCH CHANNEL PROPERLY
+      let channel;
+      try {
+        channel = await client.channels.fetch(cached.channelId);
+      } catch {
+        sayCache.delete(interaction.user.id);
+        return;
+      }
 
-      // 🛡️ HARD GUARDS (no logs, no crashes)
       if (!channel || !channel.isTextBased()) {
         sayCache.delete(interaction.user.id);
         return;
@@ -109,20 +116,20 @@ client.on(Events.InteractionCreate, async (interaction) => {
           },
         });
       } catch {
-        // silent fail (no Railway usage spike)
+        // silent — no Railway spam
       }
 
       sayCache.delete(interaction.user.id);
     }
   } catch {
-    // silent global guard
+    // absolute silence, no crashes
   }
 });
 
 /* ───────────── LOGIN ───────────── */
 
 if (!process.env.TOKEN) {
-  console.error('❌ TOKEN is missing');
+  console.error('❌ TOKEN missing');
   process.exit(1);
 }
 
