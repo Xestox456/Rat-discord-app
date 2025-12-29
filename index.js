@@ -16,12 +16,13 @@ const {
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages, // ✅ REQUIRED TO SEND
     GatewayIntentBits.DirectMessages,
   ],
   partials: [Partials.Channel],
 });
 
-/* ───────────── TEMP CACHE (with expiry) ───────────── */
+/* ───────────── TEMP CACHE ───────────── */
 
 const sayCache = new Map();
 const CACHE_TTL = 5 * 60_000; // 5 minutes
@@ -41,13 +42,11 @@ client.once(Events.ClientReady, () => {
 
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
-    /* ───── SLASH COMMAND ───── */
+    /* ───── /say ───── */
     if (interaction.isChatInputCommand() && interaction.commandName === 'say') {
       const message = interaction.options.getString('message', true);
 
-      setCache(interaction.user.id, {
-        message,
-      });
+      setCache(interaction.user.id, { message });
 
       const buttons = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
@@ -94,15 +93,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
         components: [],
       });
 
+      const channel = interaction.channel;
+
+      // 🛡️ HARD GUARDS (no logs, no crashes)
+      if (!channel || !channel.isTextBased()) {
+        sayCache.delete(interaction.user.id);
+        return;
+      }
+
       try {
-        const channel = interaction.channel;
-
-        // HARD guard — prevents ALL send errors
-        if (!channel || !channel.isTextBased()) {
-          sayCache.delete(interaction.user.id);
-          return;
-        }
-
         await channel.send({
           content: cached.message,
           allowedMentions: {
@@ -110,13 +109,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
           },
         });
       } catch {
-        // SILENT FAIL — no logs, no Railway spam
+        // silent fail (no Railway usage spike)
       }
 
       sayCache.delete(interaction.user.id);
     }
   } catch {
-    // SILENT FAIL — prevents global crash spam
+    // silent global guard
   }
 });
 
