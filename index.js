@@ -24,7 +24,7 @@ const client = new Client({
 /* ───────────── CACHE ───────────── */
 
 const sayCache = new Map();
-const CACHE_TTL = 5 * 60_000; // 5 minutes (stable)
+const CACHE_TTL = 5 * 60_000; // 5 minutes
 
 function setCache(userId, data) {
   sayCache.set(userId, data);
@@ -65,11 +65,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
       });
     }
 
-    /* ── BUTTONS ── */
     if (!interaction.isButton()) return;
 
     const cached = sayCache.get(interaction.user.id);
 
+    /* ── CANCEL ── */
     if (interaction.customId === 'say_cancel') {
       sayCache.delete(interaction.user.id);
       return interaction.update({
@@ -78,6 +78,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       });
     }
 
+    /* ── CONFIRM ── */
     if (interaction.customId === 'say_confirm') {
       if (!cached) {
         return interaction.update({
@@ -86,14 +87,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
         });
       }
 
-      // ✅ ACK BUTTON (DO NOT EDIT THIS)
+      // ✅ ACKNOWLEDGE BUTTON
       await interaction.deferUpdate();
 
-      // ✅ SEND MESSAGE WITH FULL MENTIONS SUPPORT
-      await interaction.channel.send({
+      // ✅ ALWAYS VALID CHANNEL
+      const channel = interaction.message.channel;
+
+      if (!channel || !channel.isTextBased()) return;
+
+      await channel.send({
         content: cached.message,
         allowedMentions: {
-          parse: ['users', 'roles', 'everyone'], // 🔔 USERS + ROLES + @everyone
+          parse: ['users', 'roles', 'everyone'], // 🔔 FULL PINGS
         },
       });
 
