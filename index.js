@@ -12,7 +12,11 @@ const {
 } = require('discord.js');
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.DirectMessages],
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages, // ✅ REQUIRED
+    GatewayIntentBits.DirectMessages,
+  ],
   partials: [Partials.Channel],
 });
 
@@ -79,22 +83,23 @@ client.on(Events.InteractionCreate, async (interaction) => {
         });
       }
 
-      // ✅ Properly acknowledge button FIRST
       await interaction.deferUpdate();
 
-      try {
-        const channel = await client.channels.fetch(cached.channelId);
-        if (channel?.isTextBased()) {
-          await channel.send({
-            content: cached.message,
-            allowedMentions: {
-              parse: ['users', 'roles', 'everyone'],
-            },
-          });
-        }
-      } catch (err) {
-        console.error('❌ Send failed:', err);
+      const channel = await client.channels.fetch(cached.channelId);
+
+      if (!channel || !channel.isTextBased()) {
+        return interaction.editReply({
+          content: '❌ Cannot send in this channel.',
+          components: [],
+        });
       }
+
+      await channel.send({
+        content: cached.message,
+        allowedMentions: {
+          parse: ['users', 'roles', 'everyone'],
+        },
+      });
 
       await interaction.editReply({
         content: '✅ Sent.',
