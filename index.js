@@ -11,44 +11,43 @@ const {
   MessageFlags,
 } = require('discord.js');
 
+/* ───────────── CLIENT ───────────── */
+
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages, // ✅ REQUIRED
     GatewayIntentBits.DirectMessages,
   ],
   partials: [Partials.Channel],
 });
 
-/* ───────── CACHE ───────── */
+/* ───────────── CACHE ───────────── */
 
 const sayCache = new Map();
-const CACHE_TTL = 5 * 60_000;
+const CACHE_TTL = 5 * 60_000; // 5 minutes (stable)
 
 function setCache(userId, data) {
   sayCache.set(userId, data);
   setTimeout(() => sayCache.delete(userId), CACHE_TTL);
 }
 
-/* ───────── READY ───────── */
+/* ───────────── READY ───────────── */
 
 client.once(Events.ClientReady, () => {
   console.log(`🤖 Logged in as ${client.user.tag}`);
 });
 
-/* ───────── INTERACTIONS ───────── */
+/* ───────────── INTERACTIONS ───────────── */
 
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
+    /* ── /say ── */
     if (interaction.isChatInputCommand() && interaction.commandName === 'say') {
       const message = interaction.options.getString('message', true);
 
-      setCache(interaction.user.id, {
-        message,
-        channelId: interaction.channelId,
-      });
+      setCache(interaction.user.id, { message });
 
-      const buttons = new ActionRowBuilder().addComponents(
+      const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
           .setCustomId('say_confirm')
           .setLabel('Confirm')
@@ -61,18 +60,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       return interaction.reply({
         content: `⚠️ You are about to send:\n> **${message}**`,
-        components: [buttons],
+        components: [row],
         flags: MessageFlags.Ephemeral,
       });
     }
 
+    /* ── BUTTONS ── */
     if (!interaction.isButton()) return;
 
     const cached = sayCache.get(interaction.user.id);
 
     if (interaction.customId === 'say_cancel') {
       sayCache.delete(interaction.user.id);
-      return interaction.update({ content: '❌ Cancelled.', components: [] });
+      return interaction.update({
+        content: '❌ Cancelled.',
+        components: [],
+      });
     }
 
     if (interaction.customId === 'say_confirm') {
@@ -83,27 +86,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
         });
       }
 
+      // ✅ ACK BUTTON (DO NOT EDIT THIS)
       await interaction.deferUpdate();
 
-      const channel = await client.channels.fetch(cached.channelId);
-
-      if (!channel || !channel.isTextBased()) {
-        return interaction.editReply({
-          content: '❌ Cannot send in this channel.',
-          components: [],
-        });
-      }
-
-      await channel.send({
+      // ✅ SEND MESSAGE WITH FULL MENTIONS SUPPORT
+      await interaction.channel.send({
         content: cached.message,
         allowedMentions: {
-          parse: ['users', 'roles', 'everyone'],
+          parse: ['users', 'roles', 'everyone'], // 🔔 USERS + ROLES + @everyone
         },
-      });
-
-      await interaction.editReply({
-        content: '✅ Sent.',
-        components: [],
       });
 
       sayCache.delete(interaction.user.id);
@@ -113,11 +104,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 });
 
-/* ───────── LOGIN ───────── */
+/* ───────────── LOGIN ───────────── */
 
 if (!process.env.TOKEN) {
   console.error('❌ TOKEN missing');
   process.exit(1);
 }
 
-client.login(process.env.TOKEN);
+client.login(process.env.TOKEN)
+  .then(() => console.log('✅ Discord login success'))
+  .catch(err => console.error('❌ Login failed:', err));
