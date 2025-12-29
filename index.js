@@ -8,7 +8,7 @@ const {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  MessageFlags, // ✅ added
+  MessageFlags,
 } = require('discord.js');
 
 /* ───────────── DISCORD CLIENT ───────────── */
@@ -23,8 +23,9 @@ const client = new Client({
 
 /* ───────────── TEMP CACHE (with expiry) ───────────── */
 
+// ⏱️ FIX: longer TTL so it doesn’t expire instantly
 const sayCache = new Map();
-const CACHE_TTL = 60_000; // 1 minute
+const CACHE_TTL = 5 * 60_000; // 5 minutes
 
 function setCache(userId, data) {
   sayCache.set(userId, data);
@@ -63,7 +64,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return interaction.reply({
         content: `⚠️ You are about to send:\n> **${message}**`,
         components: [buttons],
-        flags: MessageFlags.Ephemeral, // ✅ fixed
+        flags: MessageFlags.Ephemeral,
       });
     }
 
@@ -97,16 +98,24 @@ client.on(Events.InteractionCreate, async (interaction) => {
       try {
         const channel = await client.channels.fetch(cached.channelId);
         if (channel?.isTextBased()) {
-          await channel.send(cached.message);
+          await channel.send({
+            content: cached.message,
+            allowedMentions: {
+              parse: ['users', 'roles', 'everyone'], // 🔔 ping fix
+            },
+          });
           sent = true;
         }
-      } catch {
-        // ignore
+      } catch (err) {
+        console.error('❌ Send failed:', err);
       }
 
       if (!sent) {
         await interaction.followUp({
           content: cached.message,
+          allowedMentions: {
+            parse: ['users', 'roles', 'everyone'], // 🔔 ping fix
+          },
         });
       }
 
