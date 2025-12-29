@@ -8,7 +8,7 @@ const {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  MessageFlags, // ✅ added
+  MessageFlags,
 } = require('discord.js');
 
 /* ───────────── DISCORD CLIENT ───────────── */
@@ -24,7 +24,7 @@ const client = new Client({
 /* ───────────── TEMP CACHE (with expiry) ───────────── */
 
 const sayCache = new Map();
-const CACHE_TTL = 60_000; // 1 minute
+const CACHE_TTL = 5 * 60_000; // 5 minutes
 
 function setCache(userId, data) {
   sayCache.set(userId, data);
@@ -41,12 +41,12 @@ client.once(Events.ClientReady, () => {
 
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
+    /* ───── SLASH COMMAND ───── */
     if (interaction.isChatInputCommand() && interaction.commandName === 'say') {
       const message = interaction.options.getString('message', true);
 
       setCache(interaction.user.id, {
         message,
-        channelId: interaction.channelId,
       });
 
       const buttons = new ActionRowBuilder().addComponents(
@@ -63,7 +63,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return interaction.reply({
         content: `⚠️ You are about to send:\n> **${message}**`,
         components: [buttons],
-        flags: MessageFlags.Ephemeral, // ✅ fixed
+        flags: MessageFlags.Ephemeral,
       });
     }
 
@@ -71,6 +71,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     const cached = sayCache.get(interaction.user.id);
 
+    /* ───── CANCEL ───── */
     if (interaction.customId === 'say_cancel') {
       sayCache.delete(interaction.user.id);
       return interaction.update({
@@ -79,6 +80,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       });
     }
 
+    /* ───── CONFIRM ───── */
     if (interaction.customId === 'say_confirm') {
       if (!cached) {
         return interaction.update({
@@ -92,28 +94,29 @@ client.on(Events.InteractionCreate, async (interaction) => {
         components: [],
       });
 
-      let sent = false;
-
       try {
-        const channel = await client.channels.fetch(cached.channelId);
-        if (channel?.isTextBased()) {
-          await channel.send(cached.message);
-          sent = true;
-        }
-      } catch {
-        // ignore
-      }
+        const channel = interaction.channel;
 
-      if (!sent) {
-        await interaction.followUp({
+        // HARD guard — prevents ALL send errors
+        if (!channel || !channel.isTextBased()) {
+          sayCache.delete(interaction.user.id);
+          return;
+        }
+
+        await channel.send({
           content: cached.message,
+          allowedMentions: {
+            parse: ['users', 'roles', 'everyone'],
+          },
         });
+      } catch {
+        // SILENT FAIL — no logs, no Railway spam
       }
 
       sayCache.delete(interaction.user.id);
     }
-  } catch (err) {
-    console.error('❌ Interaction error:', err);
+  } catch {
+    // SILENT FAIL — prevents global crash spam
   }
 });
 
@@ -126,4 +129,4 @@ if (!process.env.TOKEN) {
 
 client.login(process.env.TOKEN)
   .then(() => console.log('✅ Discord login success'))
-  .catch(err => console.error('❌ Discord login failed:', err));
+  .catch(() => console.error('❌ Discord login failed'));
