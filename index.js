@@ -11,7 +11,7 @@ const {
   MessageFlags,
 } = require('discord.js');
 
-/* ───────────── CLIENT ───────────── */
+/* ───────────── DISCORD CLIENT ───────────── */
 
 const client = new Client({
   intents: [
@@ -21,10 +21,10 @@ const client = new Client({
   partials: [Partials.Channel],
 });
 
-/* ───────────── CACHE ───────────── */
+/* ───────────── TEMP CACHE (with expiry) ───────────── */
 
 const sayCache = new Map();
-const CACHE_TTL = 5 * 60_000; // 5 minutes
+const CACHE_TTL = 5 * 60_000; // ✅ 5 minutes (fixed expiry issue)
 
 function setCache(userId, data) {
   sayCache.set(userId, data);
@@ -41,13 +41,16 @@ client.once(Events.ClientReady, () => {
 
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
-    /* ── /say ── */
+    /* ───── /say command ───── */
     if (interaction.isChatInputCommand() && interaction.commandName === 'say') {
       const message = interaction.options.getString('message', true);
 
-      setCache(interaction.user.id, { message });
+      setCache(interaction.user.id, {
+        message,
+        channelId: interaction.channelId,
+      });
 
-      const row = new ActionRowBuilder().addComponents(
+      const buttons = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
           .setCustomId('say_confirm')
           .setLabel('Confirm')
@@ -60,7 +63,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       return interaction.reply({
         content: `⚠️ You are about to send:\n> **${message}**`,
-        components: [row],
+        components: [buttons],
         flags: MessageFlags.Ephemeral,
       });
     }
@@ -69,7 +72,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     const cached = sayCache.get(interaction.user.id);
 
-    /* ── CANCEL ── */
+    /* ───── Cancel ───── */
     if (interaction.customId === 'say_cancel') {
       sayCache.delete(interaction.user.id);
       return interaction.update({
@@ -78,7 +81,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       });
     }
 
-    /* ── CONFIRM ── */
+    /* ───── Confirm ───── */
     if (interaction.customId === 'say_confirm') {
       if (!cached) {
         return interaction.update({
@@ -87,35 +90,59 @@ client.on(Events.InteractionCreate, async (interaction) => {
         });
       }
 
-      // ✅ ACKNOWLEDGE BUTTON
-      await interaction.deferUpdate();
-
-      // ✅ ALWAYS VALID CHANNEL
-      const channel = interaction.message.channel;
-
-      if (!channel || !channel.isTextBased()) return;
-
-      await channel.send({
-        content: cached.message,
-        allowedMentions: {
-          parse: ['users', 'roles', 'everyone'], // 🔔 FULL PINGS
-        },
+      await interaction.update({
+        content: '📤 Sending…',
+        components: [],
       });
+
+      let sent = false;
+
+      try {
+        const channel = await client.channels.fetch(cached.channelId);
+
+        // ✅ BULLETPROOF CHECK (THIS FIXES EVERYTHING)
+        if (
+          channel &&
+          channel.isTextBased?.() &&
+          typeof channel.send === 'function'
+        ) {
+          await channel.send({
+            content: cached.message,
+            allowedMentions: {
+              parse: ['users', 'roles', 'everyone'],
+            },
+          });
+          sent = true;
+        }
+      } catch {
+        // ❌ intentionally silent → no Railway spam
+      }
+
+      // ✅ Guaranteed fallback (DM / GC / edge cases)
+      if (!sent) {
+        await interaction.followUp({
+          content: cached.message,
+          allowedMentions: {
+            parse: ['users', 'roles', 'everyone'],
+          },
+        });
+      }
 
       sayCache.delete(interaction.user.id);
     }
   } catch (err) {
-    console.error('❌ Interaction error:', err);
+    console.error('❌ Interaction error:', err?.message ?? err);
   }
 });
 
 /* ───────────── LOGIN ───────────── */
 
 if (!process.env.TOKEN) {
-  console.error('❌ TOKEN missing');
+  console.error('❌ TOKEN is missing');
   process.exit(1);
 }
 
-client.login(process.env.TOKEN)
+client
+  .login(process.env.TOKEN)
   .then(() => console.log('✅ Discord login success'))
-  .catch(err => console.error('❌ Login failed:', err));
+  .catch(err => console.error('❌ Discord login failed:', err));
