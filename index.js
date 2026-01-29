@@ -1,6 +1,6 @@
 require('dotenv').config();
-const express = require('express'); // Added for Render
-const app = express();              // Added for Render
+const express = require('express'); 
+const app = express();
 
 const {
   Client,
@@ -13,18 +13,11 @@ const {
   MessageFlags,
 } = require('discord.js');
 
-/* ───────────── EXPRESS SERVER (For Render) ───────────── */
+/* ───────────── EXPRESS FOR RENDER ───────────── */
 
-// Render requires a web server to stay alive. 
-// This creates a simple page that says "Online".
-app.get('/', (req, res) => {
-  res.send('Bot is Online!');
-});
-
-const PORT = process.env.PORT || 10000; // Render uses port 10000 by default
-app.listen(PORT, () => {
-  console.log(`🌐 Web server is listening on port ${PORT}`);
-});
+app.get('/', (req, res) => res.send('Bot is Online!'));
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, '0.0.0.0', () => console.log(`Listening on ${PORT}`));
 
 /* ───────────── DISCORD CLIENT ───────────── */
 
@@ -36,8 +29,6 @@ const client = new Client({
   partials: [Partials.Channel],
 });
 
-/* ───────────── TEMP CACHE (with expiry) ───────────── */
-
 const sayCache = new Map();
 const CACHE_TTL = 5 * 60_000; 
 
@@ -46,33 +37,19 @@ function setCache(userId, data) {
   setTimeout(() => sayCache.delete(userId), CACHE_TTL);
 }
 
-/* ───────────── READY ───────────── */
-
 client.once(Events.ClientReady, () => {
   console.log(`🤖 Logged in as ${client.user.tag}`);
 });
-
-/* ───────────── INTERACTIONS ───────────── */
 
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
     if (interaction.isChatInputCommand() && interaction.commandName === 'say') {
       const message = interaction.options.getString('message', true);
-
-      setCache(interaction.user.id, {
-        message,
-        channelId: interaction.channelId,
-      });
+      setCache(interaction.user.id, { message, channelId: interaction.channelId });
 
       const buttons = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId('say_confirm')
-          .setLabel('Confirm')
-          .setStyle(ButtonStyle.Danger),
-        new ButtonBuilder()
-          .setCustomId('say_cancel')
-          .setLabel('Cancel')
-          .setStyle(ButtonStyle.Secondary)
+        new ButtonBuilder().setCustomId('say_confirm').setLabel('Confirm').setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId('say_cancel').setLabel('Cancel').setStyle(ButtonStyle.Secondary)
       );
 
       return interaction.reply({
@@ -83,59 +60,39 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     if (!interaction.isButton()) return;
-
     const cached = sayCache.get(interaction.user.id);
 
     if (interaction.customId === 'say_cancel') {
       sayCache.delete(interaction.user.id);
-      return interaction.update({
-        content: '❌ Cancelled.',
-        components: [],
-      });
+      return interaction.update({ content: '❌ Cancelled.', components: [] });
     }
 
     if (interaction.customId === 'say_confirm') {
       if (!cached) {
-        return interaction.update({
-          content: '⌛ Message expired.',
-          components: [],
-        });
+        return interaction.update({ content: '⌛ Message expired.', components: [] });
       }
 
-      await interaction.update({
-        content: '📤 Sending…',
-        components: [],
-      });
+      await interaction.update({ content: '📤 Sending…', components: [] });
 
       let sent = false;
-
       try {
         const channel = await client.channels.fetch(cached.channelId);
-
-        if (
-          channel &&
-          channel.isTextBased?.() &&
-          typeof channel.send === 'function'
-        ) {
+        if (channel && channel.isTextBased?.() && typeof channel.send === 'function') {
           await channel.send({
             content: cached.message,
-            allowedMentions: {
-              parse: ['users', 'roles', 'everyone'],
-            },
+            allowedMentions: { parse: ['users', 'roles', 'everyone'] },
           });
           sent = true;
         }
       } catch (err) {
-          console.error('Channel fetch/send failed:', err.message);
+        console.error('Send error:', err.message);
       }
 
+      // Restored to your original fallback (No "Fallback:" prefix, No Ephemeral flag)
       if (!sent) {
         await interaction.followUp({
-          content: `Fallback: ${cached.message}`,
-          allowedMentions: {
-            parse: ['users', 'roles', 'everyone'],
-          },
-          flags: MessageFlags.Ephemeral // Changed to ephemeral so fallbacks aren't public
+          content: cached.message,
+          allowedMentions: { parse: ['users', 'roles', 'everyone'] },
         });
       }
 
@@ -146,17 +103,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 });
 
-/* ───────────── LOGIN ───────────── */
-
 if (!process.env.TOKEN) {
   console.error('❌ TOKEN is missing');
   process.exit(1);
 }
 
-// Fixed login logic to ensure it doesn't crash the container on Render
 client.login(process.env.TOKEN)
   .then(() => console.log('✅ Discord login success'))
-  .catch(err => {
-    console.error('❌ Discord login failed:', err);
-    process.exit(1); // Force exit so Render can attempt a clean restart
-  });
+  .catch(err => console.error('❌ Discord login failed:', err));
