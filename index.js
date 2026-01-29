@@ -14,13 +14,11 @@ const {
 } = require('discord.js');
 
 /* ───────────── EXPRESS FOR RENDER ───────────── */
-
 app.get('/', (req, res) => res.send('Bot is Online!'));
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, '0.0.0.0', () => console.log(`Listening on ${PORT}`));
 
 /* ───────────── DISCORD CLIENT ───────────── */
-
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -60,19 +58,26 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     if (!interaction.isButton()) return;
+    
+    // ✅ FIX: Defer the interaction immediately to prevent the 3-second timeout
+    await interaction.deferUpdate(); 
+
     const cached = sayCache.get(interaction.user.id);
 
     if (interaction.customId === 'say_cancel') {
       sayCache.delete(interaction.user.id);
-      return interaction.update({ content: '❌ Cancelled.', components: [] });
+      // Now use editReply instead of update after deferring
+      return interaction.editReply({ content: '❌ Cancelled.', components: [] }); 
     }
 
     if (interaction.customId === 'say_confirm') {
       if (!cached) {
-        return interaction.update({ content: '⌛ Message expired.', components: [] });
+         // Now use editReply instead of update after deferring
+        return interaction.editReply({ content: '⌛ Message expired.', components: [] });
       }
 
-      await interaction.update({ content: '📤 Sending…', components: [] });
+      // We already deferred, so we don't need the 'Sending...' update message,
+      // the "Bot is thinking..." message handles it.
 
       let sent = false;
       try {
@@ -88,8 +93,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         console.error('Send error:', err.message);
       }
 
-      // Restored to your original fallback (No "Fallback:" prefix, No Ephemeral flag)
       if (!sent) {
+        // Use followUp after the initial deferUpdate
         await interaction.followUp({
           content: cached.message,
           allowedMentions: { parse: ['users', 'roles', 'everyone'] },
@@ -97,6 +102,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       sayCache.delete(interaction.user.id);
+      // Remove the original "Bot is thinking..." message now that a public message is sent
+      await interaction.deleteReply();
     }
   } catch (err) {
     console.error('❌ Interaction error:', err?.message ?? err);
