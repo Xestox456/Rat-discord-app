@@ -10,7 +10,7 @@ const {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  MessageFlags,
+  MessageFlags, // Ensure MessageFlags is imported
 } = require('discord.js');
 
 /* ───────────── EXPRESS (LIGHTWEIGHT) ───────────── */
@@ -28,8 +28,8 @@ const sayCache = new Map();
 client.once(Events.ClientReady, () => console.log(`🤖 ${client.user.tag}`));
 
 client.on(Events.InteractionCreate, async (interaction) => {
-  // Defer reply immediately to satisfy Discord's 3-second rule
-  await interaction.deferReply({ ephemeral: true }); 
+  // FIX: Use flags: MessageFlags.Ephemeral instead of ephemeral: true
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral }); 
 
   try {
     if (interaction.isChatInputCommand() && interaction.commandName === 'say') {
@@ -41,7 +41,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         new ButtonBuilder().setCustomId('say_cancel').setLabel('Cancel').setStyle(ButtonStyle.Secondary)
       );
 
-      // Edit the deferred reply
       return interaction.editReply({ content: `⚠️ Send:\n> **${message}**`, components: [buttons] });
     }
 
@@ -64,7 +63,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           allowedMentions: { parse: ['users', 'roles', 'everyone'] },
         });
       } catch (err) {
-        // Fallback followUp (not ephemeral)
         await interaction.followUp({
           content: cached.message,
           allowedMentions: { parse: ['users', 'roles', 'everyone'] },
