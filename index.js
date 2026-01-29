@@ -13,88 +13,55 @@ const {
   MessageFlags,
 } = require('discord.js');
 
-/* ───────────── EXPRESS FOR RENDER ───────────── */
-app.get('/', (req, res) => res.send('Bot is Online!'));
+/* ───────────── EXPRESS (LIGHTWEIGHT) ───────────── */
+app.get('/', (req, res) => res.send('OK'));
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, '0.0.0.0', () => console.log(`Listening on ${PORT}`));
+app.listen(PORT, '0.0.0.0'); // Succinct listen for Render
 
 /* ───────────── DISCORD CLIENT ───────────── */
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.DirectMessages,
-  ],
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.DirectMessages],
   partials: [Partials.Channel],
 });
 
 const sayCache = new Map();
-const CACHE_TTL = 5 * 60_000; 
-
-function setCache(userId, data) {
-  sayCache.set(userId, data);
-  setTimeout(() => sayCache.delete(userId), CACHE_TTL);
-}
-
-client.once(Events.ClientReady, () => {
-  console.log(`🤖 Logged in as ${client.user.tag}`);
-});
+client.once(Events.ClientReady, () => console.log(`🤖 ${client.user.tag}`));
 
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
     if (interaction.isChatInputCommand() && interaction.commandName === 'say') {
       const message = interaction.options.getString('message', true);
-      setCache(interaction.user.id, { message, channelId: interaction.channelId });
+      sayCache.set(interaction.user.id, { message, channelId: interaction.channelId });
 
       const buttons = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId('say_confirm').setLabel('Confirm').setStyle(ButtonStyle.Danger),
         new ButtonBuilder().setCustomId('say_cancel').setLabel('Cancel').setStyle(ButtonStyle.Secondary)
       );
 
-      return interaction.reply({
-        content: `⚠️ You are about to send:\n> **${message}**`,
-        components: [buttons],
-        flags: MessageFlags.Ephemeral,
-      });
+      return interaction.reply({ content: `⚠️ Send:\n> **${message}**`, components: [buttons], flags: MessageFlags.Ephemeral });
     }
 
     if (!interaction.isButton()) return;
-    
-    // ✅ FIX: Defer the interaction immediately to prevent the 3-second timeout
-    await interaction.deferUpdate(); 
-
     const cached = sayCache.get(interaction.user.id);
 
     if (interaction.customId === 'say_cancel') {
       sayCache.delete(interaction.user.id);
-      // Now use editReply instead of update after deferring
-      return interaction.editReply({ content: '❌ Cancelled.', components: [] }); 
+      return interaction.update({ content: '❌ Cancelled.', components: [] });
     }
 
     if (interaction.customId === 'say_confirm') {
-      if (!cached) {
-         // Now use editReply instead of update after deferring
-        return interaction.editReply({ content: '⌛ Message expired.', components: [] });
-      }
+      if (!cached) return interaction.update({ content: '⌛ Expired.', components: [] });
 
-      // We already deferred, so we don't need the 'Sending...' update message,
-      // the "Bot is thinking..." message handles it.
+      await interaction.update({ content: '📤 Sending…', components: [] });
 
-      let sent = false;
       try {
-        const channel = await client.channels.fetch(cached.channelId);
-        if (channel && channel.isTextBased?.() && typeof channel.send === 'function') {
-          await channel.send({
-            content: cached.message,
-            allowedMentions: { parse: ['users', 'roles', 'everyone'] },
-          });
-          sent = true;
-        }
+        // We use the interaction's own channel object first to avoid "Missing Access" fetch errors
+        await interaction.channel.send({
+          content: cached.message,
+          allowedMentions: { parse: ['users', 'roles', 'everyone'] },
+        });
       } catch (err) {
-        console.error('Send error:', err.message);
-      }
-
-      if (!sent) {
-        // Use followUp after the initial deferUpdate
+        // If the above fails, use the fallback followUp (Original Logic)
         await interaction.followUp({
           content: cached.message,
           allowedMentions: { parse: ['users', 'roles', 'everyone'] },
@@ -102,19 +69,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       sayCache.delete(interaction.user.id);
-      // Remove the original "Bot is thinking..." message now that a public message is sent
-      await interaction.deleteReply();
     }
-  } catch (err) {
-    console.error('❌ Interaction error:', err?.message ?? err);
-  }
+  } catch (err) { /* Silent */ }
 });
 
-if (!process.env.TOKEN) {
-  console.error('❌ TOKEN is missing');
-  process.exit(1);
-}
-
-client.login(process.env.TOKEN)
-  .then(() => console.log('✅ Discord login success'))
-  .catch(err => console.error('❌ Discord login failed:', err));
+client.login(process.env.TOKEN);
