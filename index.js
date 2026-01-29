@@ -1,4 +1,6 @@
 require('dotenv').config();
+const express = require('express'); // Added for Render
+const app = express();              // Added for Render
 
 const {
   Client,
@@ -10,6 +12,19 @@ const {
   ButtonStyle,
   MessageFlags,
 } = require('discord.js');
+
+/* ───────────── EXPRESS SERVER (For Render) ───────────── */
+
+// Render requires a web server to stay alive. 
+// This creates a simple page that says "Online".
+app.get('/', (req, res) => {
+  res.send('Bot is Online!');
+});
+
+const PORT = process.env.PORT || 10000; // Render uses port 10000 by default
+app.listen(PORT, () => {
+  console.log(`🌐 Web server is listening on port ${PORT}`);
+});
 
 /* ───────────── DISCORD CLIENT ───────────── */
 
@@ -24,7 +39,7 @@ const client = new Client({
 /* ───────────── TEMP CACHE (with expiry) ───────────── */
 
 const sayCache = new Map();
-const CACHE_TTL = 5 * 60_000; // ✅ 5 minutes (fixed expiry issue)
+const CACHE_TTL = 5 * 60_000; 
 
 function setCache(userId, data) {
   sayCache.set(userId, data);
@@ -41,7 +56,6 @@ client.once(Events.ClientReady, () => {
 
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
-    /* ───── /say command ───── */
     if (interaction.isChatInputCommand() && interaction.commandName === 'say') {
       const message = interaction.options.getString('message', true);
 
@@ -72,7 +86,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     const cached = sayCache.get(interaction.user.id);
 
-    /* ───── Cancel ───── */
     if (interaction.customId === 'say_cancel') {
       sayCache.delete(interaction.user.id);
       return interaction.update({
@@ -81,7 +94,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
       });
     }
 
-    /* ───── Confirm ───── */
     if (interaction.customId === 'say_confirm') {
       if (!cached) {
         return interaction.update({
@@ -100,7 +112,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
       try {
         const channel = await client.channels.fetch(cached.channelId);
 
-        // ✅ BULLETPROOF CHECK (THIS FIXES EVERYTHING)
         if (
           channel &&
           channel.isTextBased?.() &&
@@ -114,17 +125,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
           });
           sent = true;
         }
-      } catch {
-        // ❌ intentionally silent → no Railway spam
+      } catch (err) {
+          console.error('Channel fetch/send failed:', err.message);
       }
 
-      // ✅ Guaranteed fallback (DM / GC / edge cases)
       if (!sent) {
         await interaction.followUp({
-          content: cached.message,
+          content: `Fallback: ${cached.message}`,
           allowedMentions: {
             parse: ['users', 'roles', 'everyone'],
           },
+          flags: MessageFlags.Ephemeral // Changed to ephemeral so fallbacks aren't public
         });
       }
 
@@ -142,7 +153,10 @@ if (!process.env.TOKEN) {
   process.exit(1);
 }
 
-client
-  .login(process.env.TOKEN)
+// Fixed login logic to ensure it doesn't crash the container on Render
+client.login(process.env.TOKEN)
   .then(() => console.log('✅ Discord login success'))
-  .catch(err => console.error('❌ Discord login failed:', err));
+  .catch(err => {
+    console.error('❌ Discord login failed:', err);
+    process.exit(1); // Force exit so Render can attempt a clean restart
+  });
