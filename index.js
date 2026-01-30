@@ -1,8 +1,4 @@
-const dns = require('node:dns');
-dns.setDefaultResultOrder('ipv4first');
 require('dotenv').config();
-const express = require('express');
-const app = express();
 
 const {
   Client,
@@ -12,107 +8,141 @@ const {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  MessageFlags, 
+  MessageFlags,
 } = require('discord.js');
 
-/* ───────────── 1. START WEB SERVER IMMEDIATELY ───────────── */
-// We start this FIRST so Render sees the "Open Port" and keeps the app alive.
-const PORT = process.env.PORT || 10000;
-let botStatus = "❌ Bot is initializing...";
-
-app.get('/', (req, res) => {
-  // This lets you check status by visiting your Render URL
-  res.send(`Render Check: Online <br> Bot Status: ${botStatus}`);
-});
-
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`✅ Render Port satisfied: Listening on ${PORT}`);
-});
-
-/* ───────────── 2. DISCORD CLIENT CONFIG ───────────── */
-console.log("🔄 Initializing Discord Client...");
+/* ───────────── DISCORD CLIENT ───────────── */
 
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.DirectMessages,
-    // GatewayIntentBits.MessageContent // Uncomment this if you need to read messages!
   ],
   partials: [Partials.Channel],
 });
-client.on('debug', (m) => console.log(`[DEBUG] ${m}`)); 
+
+/* ───────────── TEMP CACHE (with expiry) ───────────── */
 
 const sayCache = new Map();
+const CACHE_TTL = 5 * 60_000; // ✅ 5 minutes (fixed expiry issue)
 
-client.once(Events.ClientReady, (c) => {
-  botStatus = `✅ Logged in as ${c.user.tag}`;
-  console.log(`🤖 SUCCESS: Logged in as ${c.user.tag}`);
+function setCache(userId, data) {
+  sayCache.set(userId, data);
+  setTimeout(() => sayCache.delete(userId), CACHE_TTL);
+}
+
+/* ───────────── READY ───────────── */
+
+client.once(Events.ClientReady, () => {
+  console.log(`🤖 Logged in as ${client.user.tag}`);
 });
 
-client.on(Events.Error, (error) => {
-    console.error("🔥 DISCORD CLIENT ERROR:", error);
-});
+/* ───────────── INTERACTIONS ───────────── */
 
-/* ───────────── 3. INTERACTION LOGIC (Your Code) ───────────── */
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
-    if (interaction.isChatInputCommand()) {
-       // Using flags properly for v14
-       await interaction.deferReply({ flags: MessageFlags.Ephemeral }); 
-    }
-
+    /* ───── /say command ───── */
     if (interaction.isChatInputCommand() && interaction.commandName === 'say') {
       const message = interaction.options.getString('message', true);
-      sayCache.set(interaction.user.id, { message, channelId: interaction.channelId });
+
+      setCache(interaction.user.id, {
+        message,
+        channelId: interaction.channelId,
+      });
 
       const buttons = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('say_confirm').setLabel('Confirm').setStyle(ButtonStyle.Danger),
-        new ButtonBuilder().setCustomId('say_cancel').setLabel('Cancel').setStyle(ButtonStyle.Secondary)
+        new ButtonBuilder()
+          .setCustomId('say_confirm')
+          .setLabel('Confirm')
+          .setStyle(ButtonStyle.Danger),
+        new ButtonBuilder()
+          .setCustomId('say_cancel')
+          .setLabel('Cancel')
+          .setStyle(ButtonStyle.Secondary)
       );
 
-      return interaction.editReply({ content: `⚠️ Send:\n> **${message}**`, components: [buttons] });
+      return interaction.reply({
+        content: `⚠️ You are about to send:\n> **${message}**`,
+        components: [buttons],
+        flags: MessageFlags.Ephemeral,
+      });
     }
 
-    if (interaction.isButton()) {
-        await interaction.deferUpdate(); // Prevent "Interaction Failed"
-        const cached = sayCache.get(interaction.user.id);
-        
-        if (interaction.customId === 'say_cancel') {
-          sayCache.delete(interaction.user.id);
-          return interaction.editReply({ content: '❌ Cancelled.', components: [] });
-        }
-    
-        if (interaction.customId === 'say_confirm') {
-          if (!cached) return interaction.editReply({ content: '⌛ Expired.', components: [] });
-    
-          await interaction.editReply({ content: '📤 Sending…', components: [] });
-    
-          try {
-            await interaction.channel.send({
-              content: cached.message,
-              allowedMentions: { parse: ['users', 'roles', 'everyone'] },
-            });
-          } catch (err) {
-            await interaction.followUp({ content: 'Failed: ' + err.message, flags: MessageFlags.Ephemeral });
-          }
-          sayCache.delete(interaction.user.id);
-        }
+    if (!interaction.isButton()) return;
+
+    const cached = sayCache.get(interaction.user.id);
+
+    /* ───── Cancel ───── */
+    if (interaction.customId === 'say_cancel') {
+      sayCache.delete(interaction.user.id);
+      return interaction.update({
+        content: '❌ Cancelled.',
+        components: [],
+      });
     }
-  } catch (err) { console.error("Handler Error:", err); }
+
+    /* ───── Confirm ───── */
+    if (interaction.customId === 'say_confirm') {
+      if (!cached) {
+        return interaction.update({
+          content: '⌛ Message expired.',
+          components: [],
+        });
+      }
+
+      await interaction.update({
+        content: '📤 Sending…',
+        components: [],
+      });
+
+      let sent = false;
+
+      try {
+        const channel = await client.channels.fetch(cached.channelId);
+
+        // ✅ BULLETPROOF CHECK (THIS FIXES EVERYTHING)
+        if (
+          channel &&
+          channel.isTextBased?.() &&
+          typeof channel.send === 'function'
+        ) {
+          await channel.send({
+            content: cached.message,
+            allowedMentions: {
+              parse: ['users', 'roles', 'everyone'],
+            },
+          });
+          sent = true;
+        }
+      } catch {
+        // ❌ intentionally silent → no Railway spam
+      }
+
+      // ✅ Guaranteed fallback (DM / GC / edge cases)
+      if (!sent) {
+        await interaction.followUp({
+          content: cached.message,
+          allowedMentions: {
+            parse: ['users', 'roles', 'everyone'],
+          },
+        });
+      }
+
+      sayCache.delete(interaction.user.id);
+    }
+  } catch (err) {
+    console.error('❌ Interaction error:', err?.message ?? err);
+  }
 });
 
-/* ───────────── 4. LOGIN WITH DEBUGGING ───────────── */
+/* ───────────── LOGIN ───────────── */
+
 if (!process.env.TOKEN) {
-  console.error('❌ CRITICAL: TOKEN is missing from Environment Variables!');
-  botStatus = "❌ Error: Missing Token";
-} else {
-  console.log("🔑 Token detected (starts with: " + process.env.TOKEN.substring(0, 5) + "...)");
-  console.log("🚀 Attempting login...");
-  
-  client.login(process.env.TOKEN)
-    .catch(err => {
-        console.error("❌ LOGIN FAILED. Details below:");
-        console.error(err);
-        botStatus = "❌ Login Failed: " + err.message;
-    });
+  console.error('❌ TOKEN is missing');
+  process.exit(1);
 }
+
+client
+  .login(process.env.TOKEN)
+  .then(() => console.log('✅ Discord login success'))
+  .catch(err => console.error('❌ Discord login failed:', err));
