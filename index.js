@@ -38,6 +38,7 @@ const client = new Client({
   ],
   partials: [Partials.Channel],
 });
+client.on('debug', (m) => console.log(`[DEBUG] ${m}`)); 
 
 const sayCache = new Map();
 
