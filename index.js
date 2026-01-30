@@ -13,39 +13,48 @@ const {
   MessageFlags, 
 } = require('discord.js');
 
-/* ───────────── DISCORD CLIENT ───────────── */
+/* ───────────── 1. START WEB SERVER IMMEDIATELY ───────────── */
+// We start this FIRST so Render sees the "Open Port" and keeps the app alive.
+const PORT = process.env.PORT || 10000;
+let botStatus = "❌ Bot is initializing...";
+
+app.get('/', (req, res) => {
+  // This lets you check status by visiting your Render URL
+  res.send(`Render Check: Online <br> Bot Status: ${botStatus}`);
+});
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ Render Port satisfied: Listening on ${PORT}`);
+});
+
+/* ───────────── 2. DISCORD CLIENT CONFIG ───────────── */
+console.log("🔄 Initializing Discord Client...");
+
 const client = new Client({
-  // Note: If you need to read message content, ensure GatewayIntentBits.MessageContent is here too
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.DirectMessages],
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.DirectMessages,
+    // GatewayIntentBits.MessageContent // Uncomment this if you need to read messages!
+  ],
   partials: [Partials.Channel],
 });
 
 const sayCache = new Map();
 
-/* ───────────── 1. MOVE SERVER START HERE ───────────── */
-// Only start the web server once the bot is confirmed online
 client.once(Events.ClientReady, (c) => {
-  console.log(`🤖 Logged in as ${c.user.tag}`);
-  
-  // Start Express here
-  const PORT = process.env.PORT || 10000;
-  app.get('/', (req, res) => res.send('Bot is Online!'));
-  
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🌍 Web server is listening on port ${PORT}`);
-  });
+  botStatus = `✅ Logged in as ${c.user.tag}`;
+  console.log(`🤖 SUCCESS: Logged in as ${c.user.tag}`);
 });
 
-client.on(Events.InteractionCreate, async (interaction) => {
-  // Use flags: MessageFlags.Ephemeral
-  if (!interaction.isChatInputCommand() && !interaction.isButton()) return;
+client.on(Events.Error, (error) => {
+    console.error("🔥 DISCORD CLIENT ERROR:", error);
+});
 
+/* ───────────── 3. INTERACTION LOGIC (Your Code) ───────────── */
+client.on(Events.InteractionCreate, async (interaction) => {
   try {
-    /* ──────────────────────────────────────────────────
-       YOUR INTERACTION LOGIC GOES HERE (UNCHANGED)
-       (Kept your logic exactly as provided)
-    ────────────────────────────────────────────────── */
     if (interaction.isChatInputCommand()) {
+       // Using flags properly for v14
        await interaction.deferReply({ flags: MessageFlags.Ephemeral }); 
     }
 
@@ -62,9 +71,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     if (interaction.isButton()) {
-        // Defer update for buttons to prevent "Interaction Failed" errors if logic is slow
-        await interaction.deferUpdate(); 
-        
+        await interaction.deferUpdate(); // Prevent "Interaction Failed"
         const cached = sayCache.get(interaction.user.id);
         
         if (interaction.customId === 'say_cancel') {
@@ -83,30 +90,26 @@ client.on(Events.InteractionCreate, async (interaction) => {
               allowedMentions: { parse: ['users', 'roles', 'everyone'] },
             });
           } catch (err) {
-            console.error("Failed to send message:", err); // Log this error!
-            await interaction.followUp({
-              content: 'Failed to send message: ' + err.message,
-              flags: MessageFlags.Ephemeral
-            });
+            await interaction.followUp({ content: 'Failed: ' + err.message, flags: MessageFlags.Ephemeral });
           }
-    
           sayCache.delete(interaction.user.id);
         }
     }
-  } catch (err) { 
-      console.error("Interaction Error:", err); // NEVER leave this silent during debugging
-  }
+  } catch (err) { console.error("Handler Error:", err); }
 });
 
+/* ───────────── 4. LOGIN WITH DEBUGGING ───────────── */
 if (!process.env.TOKEN) {
-  console.error('❌ TOKEN is missing in Environment Variables');
-  process.exit(1);
+  console.error('❌ CRITICAL: TOKEN is missing from Environment Variables!');
+  botStatus = "❌ Error: Missing Token";
+} else {
+  console.log("🔑 Token detected (starts with: " + process.env.TOKEN.substring(0, 5) + "...)");
+  console.log("🚀 Attempting login...");
+  
+  client.login(process.env.TOKEN)
+    .catch(err => {
+        console.error("❌ LOGIN FAILED. Details below:");
+        console.error(err);
+        botStatus = "❌ Login Failed: " + err.message;
+    });
 }
-
-/* ───────────── 2. ADD ERROR CATCHER HERE ───────────── */
-client.login(process.env.TOKEN).catch(err => {
-    console.error("❌ FAILED TO LOGIN:");
-    console.error(err);
-    // Exit so Render knows the app crashed and tries to restart it
-    process.exit(1);
-});
