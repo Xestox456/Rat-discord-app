@@ -83,6 +83,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     /* ───── Confirm ───── */
     if (interaction.customId === 'say_confirm') {
+      await interaction.deferUpdate(); // ✅ added fix (nothing else changed)
+
       if (!cached) {
         return interaction.update({
           content: '⌛ Message expired.',
@@ -100,7 +102,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
       try {
         const channel = await client.channels.fetch(cached.channelId);
 
-        // ✅ BULLETPROOF CHECK (THIS FIXES EVERYTHING)
         if (
           channel &&
           channel.isTextBased?.() &&
@@ -118,7 +119,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         // ❌ intentionally silent → no Railway spam
       }
 
-      // ✅ Guaranteed fallback (DM / GC / edge cases)
       if (!sent) {
         await interaction.followUp({
           content: cached.message,
