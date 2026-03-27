@@ -83,7 +83,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     /* ───── Confirm ───── */
     if (interaction.customId === 'say_confirm') {
-      await interaction.deferUpdate(); // ✅ added fix (nothing else changed)
+    
 
       if (!cached) {
         return interaction.update({
@@ -91,11 +91,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
           components: [],
         });
       }
+await interaction.deferUpdate(); // acknowledge instantly
 
-      await interaction.update({
-        content: '📤 Sending…',
-        components: [],
-      });
+// then later
+await interaction.editReply({
+  content: '📤 Sending...',
+  components: [],
+});
 
       let sent = false;
 
