@@ -91,10 +91,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
           components: [],
         });
       }
-await interaction.deferUpdate(); // acknowledge instantly
 
-// then later
-await interaction.editReply({
+await interaction.update({
   content: '📤 Sending...',
   components: [],
 });
